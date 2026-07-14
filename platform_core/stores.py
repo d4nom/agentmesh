@@ -15,8 +15,15 @@ def make_qdrant(url: str) -> AsyncQdrantClient:
     return AsyncQdrantClient(url=url)
 
 
-async def mark_processed_if_new(client: redis.Redis, message_id: str) -> bool:
-    """Atomically claim a message_id. Returns True the first time it's seen,
-    False if it was already processed (redelivery)."""
+async def is_already_processed(client: redis.Redis, message_id: str) -> bool:
+    """Check before calling handle() so a message that already succeeded once
+    (e.g. redelivered after its ack was lost) isn't handled twice."""
+    return bool(await client.exists(f"{IDEMPOTENCY_KEY_PREFIX}{message_id}"))
+
+
+async def mark_processed(client: redis.Redis, message_id: str) -> None:
+    """Claim a message_id as done. Call only after handle() succeeds — claiming
+    it earlier would make a failing handler's redeliveries look like duplicates
+    and get ack'd without ever reaching max_deliver/DLQ."""
     key = f"{IDEMPOTENCY_KEY_PREFIX}{message_id}"
-    return bool(await client.set(key, "1", nx=True, ex=IDEMPOTENCY_TTL_SECONDS))
+    await client.set(key, "1", ex=IDEMPOTENCY_TTL_SECONDS)

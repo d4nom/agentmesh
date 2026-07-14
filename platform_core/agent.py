@@ -17,7 +17,7 @@ from platform_core.observability import (
     get_tracer,
     inject_traceparent,
 )
-from platform_core.stores import make_qdrant, make_redis, mark_processed_if_new
+from platform_core.stores import is_already_processed, make_qdrant, make_redis, mark_processed
 
 DEFAULT_MAX_DELIVER = 5
 DEFAULT_ACK_WAIT = 30
@@ -81,9 +81,7 @@ class BaseAgent:
     async def handle(self, env: Envelope) -> None:
         raise NotImplementedError
 
-    async def publish(
-        self, subject: str, type_: str, payload: dict, correlation_id: str
-    ) -> None:
+    async def publish(self, subject: str, type_: str, payload: dict, correlation_id: str) -> None:
         envelope = Envelope(
             sender=self.config.name,
             subject=subject,
@@ -105,9 +103,7 @@ class BaseAgent:
             except Exception:
                 self._log.warning("heartbeat_publish_failed", exc_info=True)
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(
-                    self._stop_event.wait(), timeout=HEARTBEAT_INTERVAL_SECONDS
-                )
+                await asyncio.wait_for(self._stop_event.wait(), timeout=HEARTBEAT_INTERVAL_SECONDS)
             if self._stop_event.is_set():
                 return
 
@@ -138,21 +134,19 @@ class BaseAgent:
                     correlation_id=envelope.correlation_id,
                 )
 
-                is_new = await mark_processed_if_new(self._redis, envelope.message_id)
-                if not is_new:
+                if await is_already_processed(self._redis, envelope.message_id):
                     log.info("duplicate_message_skipped")
                     await msg.ack()
                     return
 
                 try:
-                    await asyncio.wait_for(
-                        self.handle(envelope), timeout=envelope.ttl_ms / 1000
-                    )
+                    await asyncio.wait_for(self.handle(envelope), timeout=envelope.ttl_ms / 1000)
                 except Exception as exc:
                     log.error("handle_failed", error=str(exc), exc_info=True)
                     await self._handle_failure(msg, envelope, exc, log)
                     return
 
+                await mark_processed(self._redis, envelope.message_id)
                 await msg.ack()
                 log.info("handle_succeeded")
         finally:

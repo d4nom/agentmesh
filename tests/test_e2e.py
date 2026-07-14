@@ -14,8 +14,7 @@ from platform_core.envelope import Envelope, new_id
 pytestmark = pytest.mark.e2e
 
 CONNECTION_EXHAUSTION_LOG = (
-    "FATAL: remaining connection slots are reserved for non-replication "
-    "superuser connections"
+    "FATAL: remaining connection slots are reserved for non-replication superuser connections"
 )
 
 
