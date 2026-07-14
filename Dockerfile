@@ -15,6 +15,7 @@ COPY platform_core/ ./platform_core/
 COPY agents/ ./agents/
 COPY configs/ ./configs/
 COPY data/ ./data/
+COPY scripts/ ./scripts/
 RUN uv sync --no-dev
 
 ENV PATH="/app/.venv/bin:${PATH}"
