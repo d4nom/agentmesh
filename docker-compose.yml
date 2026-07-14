@@ -1,17 +1,18 @@
 name: agentmesh
 
+x-agent-env: &agent-env
+  SYSTEM_CONFIG: /app/configs/${SYSTEM_CONFIG_FILE:-incident_triage.yaml}
+  NATS_URL: nats://nats:4222
+  REDIS_URL: redis://redis:6379/0
+  QDRANT_URL: http://qdrant:6333
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+  LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+  DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+
 x-agent-common: &agent-common
   build: .
   image: agentmesh/agent:latest
   restart: unless-stopped
-  environment:
-    SYSTEM_CONFIG: /app/configs/${SYSTEM_CONFIG_FILE:-incident_triage.yaml}
-    NATS_URL: nats://nats:4222
-    REDIS_URL: redis://redis:6379/0
-    QDRANT_URL: http://qdrant:6333
-    OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
-    LLM_PROVIDER: ${LLM_PROVIDER:-mock}
-    DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
   healthcheck:
     test: ["CMD-SHELL", "test -f /tmp/healthy && find /tmp/healthy -newermt '-30 seconds' | grep -q ."]
     interval: 10s
@@ -78,3 +79,61 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
+
+  seed:
+    build: .
+    image: agentmesh/agent:latest
+    entrypoint: ["python", "scripts/seed_runbooks.py"]
+    environment:
+      QDRANT_URL: http://qdrant:6333
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    restart: "no"
+
+  parser:
+    <<: *agent-common
+    environment:
+      <<: *agent-env
+      AGENT_NAME: parser
+    depends_on:
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+
+  rag:
+    <<: *agent-common
+    environment:
+      <<: *agent-env
+      AGENT_NAME: rag
+    depends_on:
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+
+  executor:
+    <<: *agent-common
+    environment:
+      <<: *agent-env
+      AGENT_NAME: executor
+    depends_on:
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy

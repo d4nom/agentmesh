@@ -8,14 +8,14 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     PYTHONUNBUFFERED=1
 
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev
+COPY pyproject.toml ./
+RUN uv sync --no-install-project --no-dev
 
 COPY platform_core/ ./platform_core/
 COPY agents/ ./agents/
 COPY configs/ ./configs/
 COPY data/ ./data/
-RUN uv sync --frozen --no-dev
+RUN uv sync --no-dev
 
 ENV PATH="/app/.venv/bin:${PATH}"
 
