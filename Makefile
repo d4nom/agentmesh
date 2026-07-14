@@ -21,10 +21,22 @@ demo: up
 	@echo "Jaeger UI (trace across parser -> rag -> executor): http://localhost:16686"
 
 demo-alt:
-	@echo "make demo-alt: not implemented yet (Phase 3)"
+	SYSTEM_CONFIG_FILE=triage_with_summary.yaml docker compose --profile with-summary up -d --build
+	@echo "Waiting for parser/rag/executor/summarizer to report healthy..."
+	@for i in $$(seq 1 40); do \
+		unhealthy=$$(docker compose ps parser rag executor summarizer --format '{{.Health}}' 2>/dev/null | grep -vc '^healthy$$'); \
+		if [ "$$unhealthy" = "0" ]; then break; fi; \
+		sleep 2; \
+	done
+	uv run python scripts/inject_incident.py --scenario connection_exhaustion
+	@echo "Waiting for the summary to land in summarizer logs..."
+	@sleep 5
+	docker compose logs --tail=50 summarizer
+	@echo ""
+	@echo "Jaeger UI: http://localhost:16686"
 
-chaos:
-	@echo "make chaos: not implemented yet (Phase 3)"
+chaos: up
+	./scripts/chaos.sh
 
 test:
 	uv run pytest -m "not e2e"

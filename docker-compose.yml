@@ -137,3 +137,19 @@ services:
         condition: service_healthy
       jaeger:
         condition: service_healthy
+
+  summarizer:
+    <<: *agent-common
+    profiles: ["with-summary"]
+    environment:
+      <<: *agent-env
+      AGENT_NAME: summarizer
+    depends_on:
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy

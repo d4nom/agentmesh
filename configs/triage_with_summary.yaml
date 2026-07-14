@@ -1,0 +1,30 @@
+system: incident-triage-with-summary
+llm:
+  provider: ${LLM_PROVIDER:-mock}
+  model: deepseek-chat
+agents:
+  - name: parser
+    module: agents.parser:ParserAgent
+    subscribes: tasks.parse
+    publishes: [tasks.retrieve]
+    stores: [redis]
+  - name: rag
+    module: agents.rag:RagAgent
+    subscribes: tasks.retrieve
+    publishes: [tasks.execute]
+    stores: [redis, qdrant]
+    params:
+      collection: runbooks
+      top_k: 3
+  - name: executor
+    module: agents.executor:ExecutorAgent
+    subscribes: tasks.execute
+    publishes: [tasks.summarize]
+    stores: [redis]
+    params:
+      dry_run: true
+  - name: summarizer
+    module: agents.summarizer:SummarizerAgent
+    subscribes: tasks.summarize
+    publishes: [events.task.completed]
+    stores: [redis]
