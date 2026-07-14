@@ -7,10 +7,10 @@ from pydantic import BaseModel
 
 from platform_core.agent import BaseAgent
 from platform_core.config import AgentConfig
+from platform_core.embeddings import EMBEDDING_MODEL, fastembed_cache_dir
 from platform_core.envelope import Envelope
 from platform_core.observability import get_logger
 
-EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 DEFAULT_COLLECTION = "runbooks"
 DEFAULT_TOP_K = 3
 
@@ -25,7 +25,7 @@ class ParsedIncident(BaseModel):
 class RagAgent(BaseAgent):
     def __init__(self, config: AgentConfig) -> None:
         super().__init__(config)
-        self._embedder = TextEmbedding(model_name=EMBEDDING_MODEL)
+        self._embedder = TextEmbedding(model_name=EMBEDDING_MODEL, cache_dir=fastembed_cache_dir())
 
     async def _embed(self, text: str) -> list[float]:
         def _run() -> list[float]:

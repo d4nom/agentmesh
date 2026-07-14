@@ -10,10 +10,11 @@ from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
+from platform_core.embeddings import EMBEDDING_MODEL, fastembed_cache_dir
+
 RUNBOOKS_DIR = Path(__file__).resolve().parent.parent / "data" / "runbooks"
 COLLECTION = os.environ.get("RUNBOOKS_COLLECTION", "runbooks")
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
-EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 
 _SECTION_SPLIT = re.compile(r"\n(?=## )")
 
@@ -23,7 +24,7 @@ def chunk_markdown(text: str) -> list[str]:
 
 
 def main() -> None:
-    embedder = TextEmbedding(model_name=EMBEDDING_MODEL)
+    embedder = TextEmbedding(model_name=EMBEDDING_MODEL, cache_dir=fastembed_cache_dir())
     client = QdrantClient(url=QDRANT_URL)
 
     texts: list[str] = []
@@ -50,8 +51,10 @@ def main() -> None:
         for i, (vector, payload) in enumerate(zip(vectors, payloads, strict=True))
     ]
     client.upsert(COLLECTION, points=points)
-    print(f"seeded {len(points)} chunks from {len(list(RUNBOOKS_DIR.glob('*.md')))} "
-          f"runbooks into collection '{COLLECTION}'")
+    print(
+        f"seeded {len(points)} chunks from {len(list(RUNBOOKS_DIR.glob('*.md')))} "
+        f"runbooks into collection '{COLLECTION}'"
+    )
 
 
 if __name__ == "__main__":
