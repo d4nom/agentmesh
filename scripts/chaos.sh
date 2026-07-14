@@ -5,7 +5,7 @@
 set -euo pipefail
 
 echo "==> injecting incident"
-uv run python scripts/inject_incident.py --scenario wal_disk_full
+uv run --no-sync python scripts/inject_incident.py --scenario wal_disk_full
 
 echo "==> waiting 1s, then killing executor mid-processing"
 sleep 1
