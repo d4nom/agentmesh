@@ -13,6 +13,7 @@ x-agent-common: &agent-common
   build: .
   image: agentmesh/agent:latest
   restart: unless-stopped
+  init: true
   healthcheck:
     test: ["CMD-SHELL", "test -f /tmp/healthy && find /tmp/healthy -newermt '-30 seconds' | grep -q ."]
     interval: 10s
