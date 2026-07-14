@@ -22,7 +22,7 @@ INCIDENT_SCENARIOS: dict[str, str] = {
         "2026-07-14 03:12:01 UTC [21044] DETAIL: 97 of 100 max_connections already used."
     ),
     "wal_disk_full": (
-        '2026-07-14 04:41:09 UTC [8821] PANIC: could not write to file '
+        "2026-07-14 04:41:09 UTC [8821] PANIC: could not write to file "
         '"pg_wal/000000010000000A000000F3": No space left on device\n'
         "2026-07-14 04:41:09 UTC [8821] LOG: pg_wal disk usage at 100%, replication slot "
         "'analytics_sub' has been inactive for 6 hours."
@@ -32,7 +32,7 @@ INCIDENT_SCENARIOS: dict[str, str] = {
         "10.0.4.22 exceeds 300s, replay_lag=00:08:12"
     ),
     "bloat_vacuum": (
-        '2026-07-14 01:00:00 UTC [3390] LOG: autovacuum: found 1834021 dead tuples in '
+        "2026-07-14 01:00:00 UTC [3390] LOG: autovacuum: found 1834021 dead tuples in "
         'table "orders", autovacuum is falling behind'
     ),
 }

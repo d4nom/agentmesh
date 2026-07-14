@@ -13,18 +13,32 @@ from platform_core.observability import get_logger
 EXCERPT_MAX_CHARS = 300
 
 _CLASSIFICATION_RULES: list[tuple[re.Pattern[str], str, str]] = [
-    (re.compile(r"remaining connection slots|too many connections", re.I),
-     "connection_exhaustion", "critical"),
-    (re.compile(r"no space left on device|pg_wal.*(disk|full)|wal.*no space", re.I),
-     "wal_disk_full", "critical"),
-    (re.compile(r"replication.*(lag|delay)|replica.*behind", re.I),
-     "replication_lag", "warning"),
-    (re.compile(r"dead tuples|autovacuum.*(behind|bloat)|table bloat", re.I),
-     "bloat_vacuum", "warning"),
-    (re.compile(r"idle in transaction|long.running transaction", re.I),
-     "long_running_transaction", "warning"),
-    (re.compile(r"backup failed|archive_command failed|pg_basebackup.*error", re.I),
-     "failed_backup", "critical"),
+    (
+        re.compile(r"remaining connection slots|too many connections", re.I),
+        "connection_exhaustion",
+        "critical",
+    ),
+    (
+        re.compile(r"no space left on device|pg_wal.*(disk|full)|wal.*no space", re.I),
+        "wal_disk_full",
+        "critical",
+    ),
+    (re.compile(r"replication.*(lag|delay)|replica.*behind", re.I), "replication_lag", "warning"),
+    (
+        re.compile(r"dead tuples|autovacuum.*(behind|bloat)|table bloat", re.I),
+        "bloat_vacuum",
+        "warning",
+    ),
+    (
+        re.compile(r"idle in transaction|long.running transaction", re.I),
+        "long_running_transaction",
+        "warning",
+    ),
+    (
+        re.compile(r"backup failed|archive_command failed|pg_basebackup.*error", re.I),
+        "failed_backup",
+        "critical",
+    ),
 ]
 
 _HOST_PATTERN = re.compile(r"host[=:]\s*([\w.-]+)", re.I)
