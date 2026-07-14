@@ -99,7 +99,7 @@ class BaseAgent:
 
     async def _heartbeat_loop(self) -> None:
         while True:
-            HEALTHY_MARKER.touch()
+            await asyncio.to_thread(HEALTHY_MARKER.touch)
             try:
                 await self._publish_event("events.heartbeat", {"agent": self.config.name})
             except Exception:
