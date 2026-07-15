@@ -13,7 +13,7 @@ demo: up
 		if [ "$$unhealthy" = "0" ]; then break; fi; \
 		sleep 2; \
 	done
-	uv run --no-sync python scripts/inject_incident.py --scenario connection_exhaustion
+	docker compose exec parser python scripts/inject_incident.py --scenario connection_exhaustion
 	@echo "Waiting for the plan to land in executor logs..."
 	@sleep 5
 	docker compose logs --tail=50 executor
@@ -28,7 +28,7 @@ demo-alt:
 		if [ "$$unhealthy" = "0" ]; then break; fi; \
 		sleep 2; \
 	done
-	uv run --no-sync python scripts/inject_incident.py --scenario connection_exhaustion
+	docker compose exec parser python scripts/inject_incident.py --scenario connection_exhaustion
 	@echo "Waiting for the summary to land in summarizer logs..."
 	@sleep 5
 	docker compose logs --tail=50 summarizer

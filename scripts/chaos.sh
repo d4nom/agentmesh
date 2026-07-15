@@ -13,7 +13,7 @@
 set -euo pipefail
 
 echo "==> injecting incident"
-inject_output=$(uv run --no-sync python scripts/inject_incident.py --scenario wal_disk_full)
+inject_output=$(docker compose exec -T parser python scripts/inject_incident.py --scenario wal_disk_full)
 echo "$inject_output"
 correlation_id=$(echo "$inject_output" \
   | grep -o '"correlation_id": *"[^"]*"' | head -1 \
