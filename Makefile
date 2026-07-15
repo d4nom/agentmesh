@@ -1,7 +1,10 @@
-.PHONY: up down demo demo-alt chaos test logs lint
+.PHONY: build up down demo demo-alt chaos test logs lint
+
+build:
+	docker compose build
 
 up:
-	docker compose up -d --build
+	docker compose up -d
 
 down:
 	docker compose down -v
@@ -21,7 +24,7 @@ demo: up
 	@echo "Jaeger UI (trace across parser -> rag -> executor): http://localhost:16686"
 
 demo-alt:
-	SYSTEM_CONFIG_FILE=triage_with_summary.yaml docker compose --profile with-summary up -d --build
+	SYSTEM_CONFIG_FILE=triage_with_summary.yaml docker compose --profile with-summary up -d
 	@echo "Waiting for parser/rag/executor/summarizer to report healthy..."
 	@for i in $$(seq 1 40); do \
 		unhealthy=$$(docker compose ps parser rag executor summarizer --format '{{.Health}}' 2>/dev/null | grep -vc '^healthy$$'); \

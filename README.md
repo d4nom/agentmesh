@@ -59,23 +59,31 @@ Principles:
 ## Quickstart
 
 ```bash
-uv sync                # install host-side deps (inject_incident.py, pytest)
-make demo               # docker compose up -d --build, then inject one incident
+make build   # docker compose build — the only step that touches the network
+make demo    # docker compose up -d, then inject one incident, purely local from here
 ```
 
 Then open **http://localhost:16686** (Jaeger) and look for the `parser`
 service's traces — a single trace should span `parser → rag → executor`.
 
-`make demo` builds the generic agent image once and reuses it for `parser`,
-`rag`, and `executor` — they differ only by the `AGENT_NAME` env var. The
-first run also seeds Qdrant with the PostgreSQL runbooks under
-`data/runbooks/`, and downloads the `fastembed` embedding model, so it can
-take a minute or two the first time.
+`make build` builds the generic agent image once — baking in the
+`fastembed` embedding model so no agent needs network at runtime to fetch
+it — and reuses it for `parser`, `rag`, and `executor`, which differ only
+by the `AGENT_NAME` env var.
+
+`build` and `demo` are deliberately separate targets: `docker compose up
+--build` re-checks image registries for base-image metadata even when
+everything is already cached locally, so it fails on a flaky or offline
+network despite the runtime itself needing no network at all once built.
+Run `make build` once (or after you change code), then `make
+demo`/`make demo-alt`/`make chaos` as many times as you like without
+touching the network again.
 
 Other entry points:
 
 ```bash
-make up          # just bring up the whole stack
+make build       # (re)build the agent image after a code change
+make up          # just bring up the whole stack, no rebuild
 make demo-alt    # runs the 4-agent config (parser/rag/executor/summarizer)
 make chaos       # kills executor mid-task, shows it recovers on its own
 make test        # unit tests (no Docker required)
@@ -243,9 +251,9 @@ To inspect a trace:
 ## Switching the LLM provider
 
 Default is `mock` — a deterministic, network-free provider
-(`platform_core/llm.py::MockProvider`) that pattern-matches the incident
-keywords in the prompt against a handful of canned PostgreSQL remediation
-plans. This is what `make demo` uses, and it needs no API key.
+(`platform_core/llm.py::MockProvider`) that reads the incident's own
+`error_class` out of the prompt and returns the matching canned PostgreSQL
+remediation plan. This is what `make demo` uses, and it needs no API key.
 
 To use DeepSeek instead:
 
@@ -269,23 +277,13 @@ agents/          parser, rag, executor, summarizer (PoC agents; add your own her
 configs/         system YAMLs — topology lives here, not in code
 scripts/         seed_runbooks.py, inject_incident.py, chaos.sh
 data/runbooks/   PostgreSQL runbooks seeded into Qdrant for the rag agent
-tests/           unit tests (envelope/config/idempotency) + e2e (needs `make up`)
+tests/           unit tests (envelope/config/idempotency/llm) + e2e (needs `make build && make up`)
 docs/adr.md      architecture decision records
 ```
 
 ## Running the test suite
 
 ```bash
-make test                    # unit tests, no infra required
-make up && uv run pytest -m e2e   # full pipeline + DLQ test against live compose
+make test                                  # unit tests, no infra required
+make build && make up && uv run pytest -m e2e   # full pipeline + DLQ test against live compose
 ```
-
-## Caveat: this repo has not been executed in the environment it was written in
-
-This platform was implemented in a sandbox with no Docker and no PyPI
-network access, so nothing here has actually been run — no `uv sync`, no
-`docker build`, no test run. Everything was written and reviewed by hand
-against the library APIs it depends on. Treat the first `make demo` on a
-real machine as the actual verification step, and expect to fix a rough
-edge or two (dependency version pin, an API surface that shifted, timing in
-`chaos.sh`) as you go.
