@@ -269,21 +269,123 @@ substituted into `llm.provider` in the system YAML
 a secret. `build_llm_provider()` picks the implementation at agent startup
 based on that value; no code changes needed either way.
 
+## Second domain: maintenance requests
+
+A second, unrelated pipeline — DBMS cluster maintenance requests — proves
+the platform's central claim: a new domain plugs in as new files, with
+**zero changes to the core or to any existing agent**.
+
+### The request
+
+Input is a JSON maintenance request (`agents/maintenance/schemas.py`'s
+`MaintenanceRequest`, whitelist-validated — `extra: forbid`, every field
+constrained, `Literal` enums, subtask order required to be unique):
+
+```json
+{
+  "request_id": "REQ-2024-0117",
+  "priority": "critical",
+  "object": "cluster-123",
+  "object_type": "patroni_cluster",
+  "purpose": "risk_mitigation",
+  "subtasks": [
+    {"order": 1, "action": "update_os", "constraints": "rolling, node-by-node"},
+    {"order": 2, "action": "renew_certificates", "constraints": null},
+    {"order": 3, "action": "run_compliance_check", "constraints": "CIS baseline"}
+  ],
+  "sla_minutes": 30,
+  "is_downtime": false
+}
+```
+
+### The pipeline
+
+```mermaid
+flowchart LR
+    inject["inject_request.py"] -->|tasks.parse_request| request_parser["request-parser\n(schema validation, no LLM)"]
+    request_parser -->|tasks.retrieve_compliance| compliance_rag["compliance-rag\n(fastembed + Qdrant)"]
+    compliance_rag -->|tasks.plan_maintenance| maintenance_planner["maintenance-planner\n(LLMProvider)"]
+    maintenance_planner -->|events.task.completed| done(("done"))
+
+    request_parser -.->|failed 5x| dlq(("dlq.parse_request"))
+```
+
+`request-parser` validates and normalizes (no LLM — same principle as the
+first domain's `parser`: an agent doesn't have to be an LLM agent).
+`compliance-rag` embeds the request and retrieves from its own Qdrant
+collection, `compliance_scenarios`, seeded from `data/compliance/*.md` —
+kept entirely separate from the first domain's `runbooks` collection.
+`maintenance-planner` builds a plan, one entry per subtask.
+
+### Trust nothing — input or LLM output
+
+Same principle applied on both ends of the pipeline:
+
+- **Input**: `request-parser` validates against `MaintenanceRequest`'s
+  whitelist schema. A `ValidationError` is logged with the full field-level
+  error list (`request_validation_failed`) and then **re-raised, not
+  swallowed** — the platform's existing nak → redeliver → `max_deliver` →
+  DLQ mechanism handles it from there. No new fault-tolerance code needed.
+- **LLM output**: `maintenance-planner` validates the model's JSON response
+  against `MaintenancePlan` the same way — a malformed response is a
+  `ValidationError` too, and gets the same DLQ treatment. Once it *is*
+  structurally valid, its `sla_verdict` field still isn't trusted:
+  `apply_sla_override()` recomputes `exceeds` deterministically from
+  `total_estimated_minutes` vs. `sla_minutes` whenever the model's own
+  estimate blows the budget, regardless of what the model claimed.
+
+Run `make demo-request-invalid` to see the whole loop live: an
+`object_type` outside the whitelist gets nak'd 5 times with backoff and
+lands on `dlq.parse_request`, verified by `scripts/show_dlq.py` (a real
+pass/fail check on the specific injected request, not a log-tail-and-hope).
+
+### Running it
+
+```bash
+make build
+docker compose --profile maintenance up -d   # also brings up the default profile (parser/rag/executor) — harmless, they just sit idle
+make demo-request            # valid request -> a 3-subtask plan, sla_verdict=fits
+make demo-request-invalid    # invalid request -> dlq.parse_request after max_deliver
+uv run pytest -m e2e tests/test_e2e_maintenance.py
+```
+
+### Proof: zero core changes
+
+The whole domain is 16 new files. Exactly two existing files were touched,
+both explicitly permitted for additive changes only — `docker-compose.yml`
+gained a new `maintenance` profile (services `seed-compliance`,
+`request-parser`, `compliance-rag`, `maintenance-planner`; every diff line
+is an addition, none of the existing services changed) and `Makefile`
+gained two new targets plus its own name in the `.PHONY` line. Everything
+under `platform_core/`, and every one of the four first-domain agents, is
+byte-for-byte unchanged since the platform was frozen:
+
+```bash
+git diff --stat 9a54f88 HEAD -- platform_core agents/parser.py agents/rag.py agents/executor.py agents/summarizer.py
+# (empty output)
+```
+
+(`9a54f88` is the commit the platform was frozen at — `fix(makefile): split
+build out of demo/demo-alt/chaos, drop --build there`, the last commit
+before this domain's work started.)
+
 ## Repository layout
 
 ```
-platform_core/   SDK: envelope, bus, agent lifecycle, config, observability, llm, stores
-agents/          parser, rag, executor, summarizer (PoC agents; add your own here)
-configs/         system YAMLs — topology lives here, not in code
-scripts/         seed_runbooks.py, inject_incident.py, chaos.sh
-data/runbooks/   PostgreSQL runbooks seeded into Qdrant for the rag agent
-tests/           unit tests (envelope/config/idempotency/llm) + e2e (needs `make build && make up`)
-docs/adr.md      architecture decision records
+platform_core/       SDK: envelope, bus, agent lifecycle, config, observability, llm, stores
+agents/               parser, rag, executor, summarizer (PoC agents; add your own here)
+agents/maintenance/   second domain: request_parser, compliance_rag, maintenance_planner, schemas, mock_plans
+configs/              system YAMLs — topology lives here, not in code
+scripts/              seed_runbooks.py, inject_incident.py, chaos.sh, seed_compliance.py, inject_request.py, show_dlq.py
+data/runbooks/        PostgreSQL runbooks seeded into Qdrant for the rag agent
+data/compliance/      maintenance compliance docs seeded into their own Qdrant collection
+tests/                unit tests + e2e (needs `make build && make up`)
+docs/adr.md           architecture decision records
 ```
 
 ## Running the test suite
 
 ```bash
-make test                                  # unit tests, no infra required
-make build && make up && uv run pytest -m e2e   # full pipeline + DLQ test against live compose
+make test                                       # unit tests, no infra required
+make build && make up && uv run pytest -m e2e   # full pipeline + DLQ test against live compose (both domains)
 ```
