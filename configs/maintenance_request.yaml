@@ -1,0 +1,23 @@
+system: maintenance-request
+llm:
+  provider: ${LLM_PROVIDER:-mock}
+  model: deepseek-chat
+agents:
+  - name: request-parser
+    module: agents.maintenance.request_parser:RequestParserAgent
+    subscribes: tasks.parse_request
+    publishes: [tasks.retrieve_compliance]
+    stores: [redis]
+  - name: compliance-rag
+    module: agents.maintenance.compliance_rag:ComplianceRagAgent
+    subscribes: tasks.retrieve_compliance
+    publishes: [tasks.plan_maintenance]
+    stores: [redis, qdrant]
+    params:
+      collection: compliance_scenarios
+      top_k: 2
+  - name: maintenance-planner
+    module: agents.maintenance.maintenance_planner:MaintenancePlannerAgent
+    subscribes: tasks.plan_maintenance
+    publishes: [events.task.completed]
+    stores: [redis]

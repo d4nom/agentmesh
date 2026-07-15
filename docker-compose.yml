@@ -154,3 +154,75 @@ services:
         condition: service_healthy
       jaeger:
         condition: service_healthy
+
+  # Second domain: maintenance-request pipeline. Own agent names, own subjects,
+  # own Qdrant collection — a parallel pipeline, not a variant of the first
+  # one, so SYSTEM_CONFIG is pinned here rather than following
+  # SYSTEM_CONFIG_FILE (which the incident-triage services above use) —
+  # running `--profile maintenance` always also starts the default-profile
+  # services, and they must keep loading their own config regardless of what
+  # this profile needs.
+  seed-compliance:
+    build: .
+    image: agentmesh/agent:latest
+    profiles: ["maintenance"]
+    entrypoint: ["python", "scripts/seed_compliance.py"]
+    environment:
+      QDRANT_URL: http://qdrant:6333
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    restart: "no"
+
+  request-parser:
+    <<: *agent-common
+    profiles: ["maintenance"]
+    environment:
+      <<: *agent-env
+      SYSTEM_CONFIG: /app/configs/maintenance_request.yaml
+      AGENT_NAME: request-parser
+    depends_on:
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+
+  compliance-rag:
+    <<: *agent-common
+    profiles: ["maintenance"]
+    environment:
+      <<: *agent-env
+      SYSTEM_CONFIG: /app/configs/maintenance_request.yaml
+      AGENT_NAME: compliance-rag
+    depends_on:
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+      seed-compliance:
+        condition: service_completed_successfully
+
+  maintenance-planner:
+    <<: *agent-common
+    profiles: ["maintenance"]
+    environment:
+      <<: *agent-env
+      SYSTEM_CONFIG: /app/configs/maintenance_request.yaml
+      AGENT_NAME: maintenance-planner
+    depends_on:
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
