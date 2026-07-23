@@ -403,7 +403,7 @@ configs/              system YAMLs — topology lives here, not in code
 scripts/              seed/inject helpers plus the deterministic chaos check
 data/runbooks/        PostgreSQL runbooks seeded into Qdrant for the rag agent
 data/compliance/      maintenance compliance docs seeded into their own Qdrant collection
-tests/                unit tests + e2e (needs `make build && make up`)
+tests/                unit tests + e2e (needs the Compose stack; maintenance tests need its profile)
 docs/adr.md           architecture decision records
 ```
 
@@ -411,5 +411,7 @@ docs/adr.md           architecture decision records
 
 ```bash
 make test                                       # unit tests, no infra required
-make build && make up && uv run pytest -m e2e   # full pipeline + DLQ test against live compose (both domains)
+make build
+docker compose --profile maintenance up -d
+uv run pytest -m e2e                            # full pipeline + DLQ tests for both domains
 ```
