@@ -22,7 +22,7 @@ async def is_already_processed(client: redis.Redis, message_id: str) -> bool:
 
 
 async def mark_processed(client: redis.Redis, message_id: str) -> None:
-    """Claim a message_id as done. Call only after handle() succeeds — claiming
+    """Record a message_id as done. Call only after handle() succeeds — recording
     it earlier would make a failing handler's redeliveries look like duplicates
     and get ack'd without ever reaching max_deliver/DLQ."""
     key = f"{IDEMPOTENCY_KEY_PREFIX}{message_id}"

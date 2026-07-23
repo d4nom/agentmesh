@@ -59,14 +59,15 @@ Principles:
 ## Quickstart
 
 ```bash
-make build   # docker compose build — the only step that touches the network
-make demo    # docker compose up -d, then inject one incident, purely local from here
+make first-run   # build, start the stack, wait for health, and inject one incident
 ```
 
 Then open **http://localhost:16686** (Jaeger) and look for the `parser`
 service's traces — a single trace should span `parser → rag → executor`.
 
-`make build` builds the generic agent image once — baking in the
+`make first-run` is the one-command path for a clean checkout. It runs
+`make build` and then `make demo`. The build creates the generic agent image
+once — baking in the
 `fastembed` embedding model so no agent needs network at runtime to fetch
 it — and reuses it for `parser`, `rag`, and `executor`, which differ only
 by the `AGENT_NAME` env var.
@@ -82,10 +83,12 @@ touching the network again.
 Other entry points:
 
 ```bash
+make first-run   # clean-checkout path: build + demo in one command
 make build       # (re)build the agent image after a code change
 make up          # just bring up the whole stack, no rebuild
+make demo        # rerun the default demo from an already-built image
 make demo-alt    # runs the 4-agent config (parser/rag/executor/summarizer)
-make chaos       # kills executor mid-task, shows it recovers on its own
+make chaos       # deterministically kills executor inside handle(), verifies redelivery
 make test        # unit tests (no Docker required)
 make logs        # tail all service logs
 make down        # tear everything down
@@ -147,9 +150,11 @@ naks and eventually dead-letters for you).
 
 `module` is `<python.module.path>:<ClassName>`, imported by the universal
 runner at startup. `subscribes` is the one subject this agent's durable
-consumer listens on. `publishes` is informational/self-documenting — your
-handler can call `self.publish(subject, ...)` for any subject, but listing
-the ones you use here keeps the topology readable from the YAML alone.
+consumer listens on. `publishes` declares downstream subjects; the shipped
+agents read it at runtime to choose their destination, which is how the
+summary variant reroutes `executor` without a code change. `BaseAgent` does
+not enforce it as an allowlist, so a custom handler can still publish to a
+subject computed at runtime.
 
 **3. Add a compose service** in `docker-compose.yml`, copy-pasting the
 `executor` block and changing the name and `AGENT_NAME`:
@@ -205,34 +210,58 @@ What's guaranteed, and how:
   independent container with `restart: unless-stopped`. The bus (JetStream)
   holds messages durably, so a dead agent just stops consuming — it doesn't
   drop anything in flight, and other agents are unaffected.
-- **At-least-once delivery, exactly-once processing.** Every agent has a
+- **At-least-once delivery with best-effort duplicate suppression.** Every agent has a
   durable JetStream consumer (`max_deliver=5`, `ack_wait=30s`). If a handler
   raises, the SDK `nak`s the message with exponential backoff
   (`min(2**attempt, 30)` seconds) so JetStream redelivers it. Before running
-  `handle()`, the SDK does `SETNX processed:{message_id}` in Redis
-  (TTL 1h) — a redelivered message that already succeeded is ack'd
-  immediately without being handled twice.
+  `handle()`, the SDK checks `processed:{message_id}` in Redis. After the
+  handler and its downstream publish succeed, it stores that key with a
+  one-hour TTL and only then acks. A redelivery of that same completed
+  message is skipped. This is deliberately not advertised as exactly-once;
+  the remaining duplicate window is documented below.
 - **Poison messages don't loop forever.** After the 5th failed delivery, the
   SDK publishes the message to `dlq.<role>` (with an `error` field added to
   the payload) and `term()`s it so JetStream stops retrying. Covered by
   `tests/test_e2e.py::test_unprocessable_message_is_dead_lettered_after_max_deliver`.
-  Run `make chaos` to see the restart + redelivery path live: it injects an
-  incident, kills `executor` mid-task, and shows the container restart,
-  JetStream redeliver the unacked message, and the task still complete.
+  Protocol-invalid Envelopes follow the same retry budget and then land in
+  the DLQ with a bounded raw-message excerpt.
+- **Consumer failures cannot leave a healthy zombie.** The service supervises
+  its consumer task. An unexpected failure outside an agent's `handle()`
+  stops the process, allowing the container restart policy to recover it.
+  Run `make chaos` to see the restart + redelivery path live: a dedicated
+  config adds a controlled processing window, the script waits until
+  `executor` is inside `handle()`, kills it, verifies Docker's `RestartCount`
+  increased, and requires `num_delivered >= 2` on the successful result.
 - **Liveness is externally observable.** Every agent touches `/tmp/healthy`
   once per 10s heartbeat loop; the compose healthcheck checks that file's
-  mtime is under 30s old. A hung agent (heartbeat loop stalled) goes
-  unhealthy and gets restarted by Docker.
+  mtime is under 30s old. A stalled event loop therefore becomes
+  `unhealthy`. Docker Compose exposes that status but does not restart a
+  container solely because it is unhealthy; process exits are recovered by
+  `restart: unless-stopped`, while production deployments should connect
+  health status to their orchestrator's replacement policy.
 - **Shutdown is graceful.** On `SIGTERM`/`SIGINT`, an agent stops pulling new
   messages, lets whatever it's currently processing finish, publishes
   `events.agent.stopped`, and drains its NATS connection before exiting.
 
+Known PoC limits:
+
+- Delivery is at least once. If a process dies after publishing its result
+  but before storing the processed marker, it can publish that result again.
+  The included executor is `dry_run`, so the demo has no destructive external
+  side effect; a real executor must use a domain idempotency key or a
+  transactional outbox appropriate to its target system.
+- Compose runs one NATS node and one Redis node without persistent volumes.
+  This proves recovery from an **agent** failure, not infrastructure high
+  availability. Production would use clustered/persistent deployments.
+- The PoC does not configure inter-service authentication or TLS.
+
 ## Observability
 
 All traces go to Jaeger via OTLP; all logs are structured JSON on stdout
-(`docker compose logs <service>` / `make logs`), carrying `agent`,
-`message_id`, `correlation_id`, and `trace_id` on every line so you can grep
-one incident's logs across all three agents by `correlation_id`.
+(`docker compose logs <service>` / `make logs`). Message-processing logs
+carry `agent`, `message_id`, `correlation_id`, and `trace_id`; lifecycle logs
+that do not belong to a message carry the agent name. This lets you grep one
+incident's logs across all agents by `correlation_id`.
 
 To inspect a trace:
 
@@ -349,25 +378,20 @@ make demo-request-invalid    # invalid request -> dlq.parse_request after max_de
 uv run pytest -m e2e tests/test_e2e_maintenance.py
 ```
 
-### Proof: zero core changes
+### Proof: the second domain required zero core changes
 
-The whole domain is 16 new files. Exactly two existing files were touched,
-both explicitly permitted for additive changes only — `docker-compose.yml`
-gained a new `maintenance` profile (services `seed-compliance`,
-`request-parser`, `compliance-rag`, `maintenance-planner`; every diff line
-is an addition, none of the existing services changed) and `Makefile`
-gained two new targets plus its own name in the `.PHONY` line. Everything
-under `platform_core/`, and every one of the four first-domain agents, is
-byte-for-byte unchanged since the platform was frozen:
+The maintenance domain was added between the platform-freeze commit
+`9a54f88` and the completed-domain commit `5c71265`. Its change set added
+domain files plus additive Compose/Make targets; it did not modify
+`platform_core/` or any first-domain agent:
 
 ```bash
-git diff --stat 9a54f88 HEAD -- platform_core agents/parser.py agents/rag.py agents/executor.py agents/summarizer.py
+git diff --stat 9a54f88 5c71265 -- platform_core agents/parser.py agents/rag.py agents/executor.py agents/summarizer.py
 # (empty output)
 ```
 
-(`9a54f88` is the commit the platform was frozen at — `fix(makefile): split
-build out of demo/demo-alt/chaos, drop --build there`, the last commit
-before this domain's work started.)
+Later generic reliability improvements may change the core, but they are
+independent of that historical domain-addition diff.
 
 ## Repository layout
 
@@ -376,7 +400,7 @@ platform_core/       SDK: envelope, bus, agent lifecycle, config, observability,
 agents/               parser, rag, executor, summarizer (PoC agents; add your own here)
 agents/maintenance/   second domain: request_parser, compliance_rag, maintenance_planner, schemas, mock_plans
 configs/              system YAMLs — topology lives here, not in code
-scripts/              seed_runbooks.py, inject_incident.py, chaos.sh, seed_compliance.py, inject_request.py, show_dlq.py
+scripts/              seed/inject helpers plus the deterministic chaos check
 data/runbooks/        PostgreSQL runbooks seeded into Qdrant for the rag agent
 data/compliance/      maintenance compliance docs seeded into their own Qdrant collection
 tests/                unit tests + e2e (needs `make build && make up`)

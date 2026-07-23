@@ -1,4 +1,8 @@
-.PHONY: build up down demo demo-alt chaos demo-request demo-request-invalid test logs lint
+.PHONY: first-run build up down demo demo-alt chaos demo-request demo-request-invalid test logs lint
+
+first-run:
+	$(MAKE) build
+	$(MAKE) demo
 
 build:
 	docker compose build
@@ -11,11 +15,17 @@ down:
 
 demo: up
 	@echo "Waiting for parser/rag/executor to report healthy..."
-	@for i in $$(seq 1 40); do \
-		unhealthy=$$(docker compose ps parser rag executor --format '{{.Health}}' 2>/dev/null | grep -vc '^healthy$$'); \
-		if [ "$$unhealthy" = "0" ]; then break; fi; \
+	@ready=0; \
+	for i in $$(seq 1 40); do \
+		healthy=$$(docker compose ps parser rag executor --format '{{.Health}}' 2>/dev/null | grep -c '^healthy$$' || true); \
+		if [ "$$healthy" = "3" ]; then ready=1; break; fi; \
 		sleep 2; \
-	done
+	done; \
+	if [ "$$ready" != "1" ]; then \
+		echo "ERROR: parser/rag/executor did not all become healthy" >&2; \
+		docker compose ps parser rag executor >&2; \
+		exit 1; \
+	fi
 	docker compose exec parser python scripts/inject_incident.py --scenario connection_exhaustion
 	@echo "Waiting for the plan to land in executor logs..."
 	@sleep 5
@@ -26,11 +36,17 @@ demo: up
 demo-alt:
 	SYSTEM_CONFIG_FILE=triage_with_summary.yaml docker compose --profile with-summary up -d
 	@echo "Waiting for parser/rag/executor/summarizer to report healthy..."
-	@for i in $$(seq 1 40); do \
-		unhealthy=$$(docker compose ps parser rag executor summarizer --format '{{.Health}}' 2>/dev/null | grep -vc '^healthy$$'); \
-		if [ "$$unhealthy" = "0" ]; then break; fi; \
+	@ready=0; \
+	for i in $$(seq 1 40); do \
+		healthy=$$(docker compose ps parser rag executor summarizer --format '{{.Health}}' 2>/dev/null | grep -c '^healthy$$' || true); \
+		if [ "$$healthy" = "4" ]; then ready=1; break; fi; \
 		sleep 2; \
-	done
+	done; \
+	if [ "$$ready" != "1" ]; then \
+		echo "ERROR: parser/rag/executor/summarizer did not all become healthy" >&2; \
+		docker compose ps parser rag executor summarizer >&2; \
+		exit 1; \
+	fi
 	docker compose exec parser python scripts/inject_incident.py --scenario connection_exhaustion
 	@echo "Waiting for the summary to land in summarizer logs..."
 	@sleep 5
@@ -38,17 +54,24 @@ demo-alt:
 	@echo ""
 	@echo "Jaeger UI: http://localhost:16686"
 
-chaos: up
+chaos:
+	SYSTEM_CONFIG_FILE=incident_triage_chaos.yaml docker compose up -d
 	./scripts/chaos.sh
 
 demo-request:
 	docker compose --profile maintenance up -d
 	@echo "Waiting for request-parser/compliance-rag/maintenance-planner to report healthy..."
-	@for i in $$(seq 1 40); do \
-		unhealthy=$$(docker compose ps request-parser compliance-rag maintenance-planner --format '{{.Health}}' 2>/dev/null | grep -vc '^healthy$$'); \
-		if [ "$$unhealthy" = "0" ]; then break; fi; \
+	@ready=0; \
+	for i in $$(seq 1 40); do \
+		healthy=$$(docker compose ps request-parser compliance-rag maintenance-planner --format '{{.Health}}' 2>/dev/null | grep -c '^healthy$$' || true); \
+		if [ "$$healthy" = "3" ]; then ready=1; break; fi; \
 		sleep 2; \
-	done
+	done; \
+	if [ "$$ready" != "1" ]; then \
+		echo "ERROR: request-parser/compliance-rag/maintenance-planner did not all become healthy" >&2; \
+		docker compose ps request-parser compliance-rag maintenance-planner >&2; \
+		exit 1; \
+	fi
 	docker compose exec request-parser python scripts/inject_request.py --scenario os_update
 	@echo "Waiting for the plan to land in maintenance-planner logs..."
 	@sleep 5
@@ -59,11 +82,17 @@ demo-request:
 demo-request-invalid:
 	docker compose --profile maintenance up -d
 	@echo "Waiting for request-parser/compliance-rag/maintenance-planner to report healthy..."
-	@for i in $$(seq 1 40); do \
-		unhealthy=$$(docker compose ps request-parser compliance-rag maintenance-planner --format '{{.Health}}' 2>/dev/null | grep -vc '^healthy$$'); \
-		if [ "$$unhealthy" = "0" ]; then break; fi; \
+	@ready=0; \
+	for i in $$(seq 1 40); do \
+		healthy=$$(docker compose ps request-parser compliance-rag maintenance-planner --format '{{.Health}}' 2>/dev/null | grep -c '^healthy$$' || true); \
+		if [ "$$healthy" = "3" ]; then ready=1; break; fi; \
 		sleep 2; \
-	done
+	done; \
+	if [ "$$ready" != "1" ]; then \
+		echo "ERROR: request-parser/compliance-rag/maintenance-planner did not all become healthy" >&2; \
+		docker compose ps request-parser compliance-rag maintenance-planner >&2; \
+		exit 1; \
+	fi
 	@inject_output=$$(docker compose exec -T request-parser python scripts/inject_request.py --scenario invalid_object_type); \
 	echo "$$inject_output"; \
 	correlation_id=$$(echo "$$inject_output" \

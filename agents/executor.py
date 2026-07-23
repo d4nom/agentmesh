@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -44,6 +45,15 @@ class ExecutorAgent(BaseAgent):
 
     async def handle(self, env: Envelope) -> None:
         data = ExecutionInput.model_validate(env.payload)
+        log = get_logger(agent=self.config.name, correlation_id=env.correlation_id)
+        processing_delay_seconds = float(self.config.params.get("processing_delay_seconds", 0))
+        log.info(
+            "execution_started",
+            processing_delay_seconds=processing_delay_seconds,
+        )
+        if processing_delay_seconds > 0:
+            await asyncio.sleep(processing_delay_seconds)
+
         chunks_text = "\n\n".join(chunk.get("text", "") for chunk in data.runbook_chunks)
         prompt = PROMPT_TEMPLATE.format(
             incident=json.dumps(data.incident), chunks=chunks_text or "(none retrieved)"
@@ -53,7 +63,6 @@ class ExecutorAgent(BaseAgent):
         plan = ExecutionPlan.model_validate_json(raw_plan)
 
         dry_run = bool(self.config.params.get("dry_run", True))
-        log = get_logger(agent=self.config.name, correlation_id=env.correlation_id)
         if dry_run:
             log.info(
                 "dry_run_plan",

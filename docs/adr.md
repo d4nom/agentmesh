@@ -1,13 +1,15 @@
 # Architecture Decision Records
 
-Short records of the decisions that shaped this platform. All were fixed by
-the brief up front; these capture the reasoning, not a debate.
+Short records of the decisions that shaped this platform in response to the
+requirements and the PoC's operating constraints. They capture the reasoning
+and tradeoffs.
 
 ## ADR-001: NATS JetStream as the bus, not Kafka or HTTP
 
 **Context.** Agents need to communicate without knowing about each other,
-with at-least-once delivery, durable queuing, and a DLQ path — and the brief
-explicitly forbids HTTP between agents.
+with durable queuing, retry/DLQ semantics, and failure isolation. The brief
+does not forbid HTTP; avoiding direct agent-to-agent HTTP is an architectural
+choice made to meet those requirements.
 
 **Decision.** NATS JetStream.
 
@@ -19,8 +21,8 @@ explicitly forbids HTTP between agents.
 - Plain HTTP between agents would mean every agent needs to know the
   network address of its downstream agents, turning topology into a
   service-discovery problem and losing durability (a dead receiver drops
-  the request) — exactly what the brief's "one agent's failure must not
-  block the system" requirement rules out.
+  an unpersisted request). That works against the requirement that one
+  agent's failure must not block the rest of the system.
 - NATS JetStream gives durable streams, pull consumers, ack/nak,
   `max_deliver`, and per-message redelivery out of the box, with a single
   lightweight binary and a Python client that's easy to wrap in a small SDK.
@@ -83,3 +85,21 @@ nothing more.
 agent that wants an LLM ReAct-style loop has to build it on top of
 `LLMProvider` itself. That's an acceptable tradeoff for a platform whose job
 is reliable message routing, not reasoning loops.
+
+## ADR-004: At-least-once delivery, not an exactly-once claim
+
+**Context.** JetStream redelivers unacknowledged messages. A process can die
+after publishing a downstream result but before recording completion and
+acking the input.
+
+**Decision.** Prefer a possible duplicate over silent loss. The SDK checks a
+Redis completion marker before `handle()`, writes it only after the handler
+and downstream publish succeed, and then acks. Retries and DLQ behavior remain
+available because a failed first attempt is never marked as complete.
+
+**Consequences.** Redelivery of the same already-marked `message_id` is
+suppressed, but there is a crash window between the downstream side effect
+and the completion marker. The platform therefore promises at-least-once
+delivery with best-effort duplicate suppression, not exactly-once processing.
+A production agent with destructive effects must add a domain idempotency key
+or a transactional outbox supported by its target system.

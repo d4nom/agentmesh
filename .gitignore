@@ -6,3 +6,6 @@ __pycache__/
 *.egg-info/
 .env
 .DS_Store
+
+# Private interview-preparation notes; not part of the public project docs.
+agentmesh_master_doc.md
