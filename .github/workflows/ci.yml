@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.28"
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --frozen --dev
+
+      - name: Audit locked dependencies
+        run: uv audit --frozen
+
+      - name: Run unit tests
+        run: uv run --frozen pytest -m "not e2e"
+
+      - name: Run Ruff
+        run: |
+          uv run --frozen ruff check .
+          uv run --frozen ruff format --check .
+
+      - name: Validate Compose configurations
+        run: |
+          docker compose config --quiet
+          docker compose --profile build config --quiet
+          SYSTEM_CONFIG_FILE=triage_with_summary.yaml docker compose --profile with-summary config --quiet
+          docker compose --profile maintenance config --quiet

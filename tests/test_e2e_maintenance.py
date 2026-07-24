@@ -36,13 +36,13 @@ INVALID_REQUEST = {
 }
 
 
-async def test_valid_request_completes_with_a_fitting_plan():
+async def test_valid_request_completes_with_a_validated_plan():
     nats_url = os.environ.get("NATS_URL", "nats://localhost:4222")
     nc, js = await connect(nats_url)
     await ensure_streams(js)
 
     sub = await pull_subscribe(
-        js, "events.task.completed", durable="test-e2e-maintenance-completed"
+        js, "events.maintenance.completed", durable="test-e2e-maintenance-completed"
     )
 
     correlation_id = new_id()
@@ -70,11 +70,12 @@ async def test_valid_request_completes_with_a_fitting_plan():
 
     await nc.close()
 
-    assert result is not None, "did not observe events.task.completed for the injected request"
+    assert result is not None, "did not observe events.maintenance.completed for the request"
     assert result.payload["request"]["request_id"] == "REQ-2024-0117"
     plan = result.payload["plan"]
     assert len(plan["plan"]) == 3
-    assert plan["sla_verdict"] == "fits"
+    assert plan["total_estimated_minutes"] == 25
+    assert plan["sla_verdict"] == "at_risk"
 
 
 async def test_invalid_request_is_dead_lettered_after_max_deliver():

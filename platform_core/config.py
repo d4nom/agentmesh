@@ -3,12 +3,45 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal, Self
 
 import yaml
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-(?P<default>[^}]*))?\}")
+_PLATFORM_SUBJECT_PATTERN = re.compile(
+    r"^(?:tasks|events|dlq)\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$"
+)
+
+
+def _validate_exact_platform_subject(value: str) -> str:
+    if not _PLATFORM_SUBJECT_PATTERN.fullmatch(value):
+        raise ValueError(
+            "subject must be an exact tasks.*, events.* or dlq.* subject "
+            "using alphanumeric, '_' or '-' tokens; wildcards are not allowed"
+        )
+    return value
+
+
+PlatformSubject = Annotated[
+    str,
+    Field(min_length=1),
+    AfterValidator(_validate_exact_platform_subject),
+]
+StoreName = Literal["redis", "qdrant"]
+
+
+def _validate_unique_stores(values: list[StoreName]) -> list[StoreName]:
+    if len(values) != len(set(values)):
+        raise ValueError("stores must not contain duplicates")
+    return values
+
+
+StoreSelection = Annotated[
+    list[StoreName],
+    Field(max_length=2),
+    AfterValidator(_validate_unique_stores),
+]
 
 
 def _substitute_env(text: str) -> str:
@@ -26,23 +59,37 @@ def _substitute_env(text: str) -> str:
 
 
 class LLMConfig(BaseModel):
-    provider: str = "mock"
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["mock", "deepseek"] = "mock"
     model: str = "deepseek-chat"
 
 
 class AgentSpec(BaseModel):
-    name: str
-    module: str
-    subscribes: str
-    publishes: list[str] = []
-    stores: list[str] = []
-    params: dict[str, Any] = {}
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    module: str = Field(min_length=1)
+    subscribes: PlatformSubject
+    publishes: list[PlatformSubject] = Field(default_factory=list)
+    stores: StoreSelection = Field(default_factory=list)
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class SystemConfig(BaseModel):
-    system: str
-    llm: LLMConfig = LLMConfig()
-    agents: list[AgentSpec]
+    model_config = ConfigDict(extra="forbid")
+
+    system: str = Field(min_length=1)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    agents: list[AgentSpec] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_unique_agent_names(self) -> Self:
+        names = [agent.name for agent in self.agents]
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            raise ValueError(f"agent names must be unique: {', '.join(duplicates)}")
+        return self
 
     def agent_spec(self, name: str) -> AgentSpec:
         for spec in self.agents:
@@ -55,13 +102,15 @@ class AgentConfig(BaseModel):
     """Everything a BaseAgent instance needs to run: its own spec plus
     system-wide LLM settings and infra connection strings resolved from env."""
 
-    name: str
-    module: str
-    subscribes: str
-    publishes: list[str] = []
-    stores: list[str] = []
-    params: dict[str, Any] = {}
-    system: str
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    module: str = Field(min_length=1)
+    subscribes: PlatformSubject
+    publishes: list[PlatformSubject] = Field(default_factory=list)
+    stores: StoreSelection = Field(default_factory=list)
+    params: dict[str, Any] = Field(default_factory=dict)
+    system: str = Field(min_length=1)
     llm: LLMConfig
     nats_url: str
     redis_url: str

@@ -23,7 +23,7 @@ async def test_incident_triage_pipeline_completes():
     nc, js = await connect(nats_url)
     await ensure_streams(js)
 
-    sub = await pull_subscribe(js, "events.task.completed", durable="test-e2e-completed")
+    sub = await pull_subscribe(js, "events.incident.completed", durable="test-e2e-completed")
 
     correlation_id = new_id()
     envelope = Envelope(
@@ -50,7 +50,7 @@ async def test_incident_triage_pipeline_completes():
 
     await nc.drain()
 
-    assert result is not None, "did not observe events.task.completed for the injected incident"
+    assert result is not None, "did not observe events.incident.completed for the incident"
     assert result.payload["incident"]["error_class"] == "connection_exhaustion"
     assert result.payload["plan"]["action"]
     assert result.payload["plan"]["commands"]
@@ -58,8 +58,8 @@ async def test_incident_triage_pipeline_completes():
 
 async def test_unprocessable_message_is_dead_lettered_after_max_deliver():
     """A payload that fails the executor's own pydantic validation raises on
-    every delivery attempt, so the SDK must exhaust max_deliver=5 and publish
-    to dlq.execute instead of redelivering forever."""
+    every delivery attempt, so the SDK must exhaust its five-attempt budget
+    and publish to dlq.execute instead of redelivering forever."""
     nats_url = os.environ.get("NATS_URL", "nats://localhost:4222")
     nc, js = await connect(nats_url)
     await ensure_streams(js)

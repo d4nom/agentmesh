@@ -10,6 +10,20 @@ import httpx
 from platform_core.config import LLMConfig
 
 _ERROR_CLASS_PATTERN = re.compile(r'"error_class":\s*"([a-z_]+)"')
+_RETRIEVED_RUNBOOKS_PATTERN = re.compile(
+    r"\nRelevant runbook excerpts:\n<retrieved_runbooks>\n"
+    r"(?P<chunks>.*?)\n</retrieved_runbooks>",
+    re.DOTALL,
+)
+
+_RUNBOOK_SOURCE_BY_ERROR_CLASS = {
+    "connection_exhaustion": "connection_exhaustion.md",
+    "wal_disk_full": "wal_disk_full.md",
+    "replication_lag": "replication_lag.md",
+    "bloat_vacuum": "bloat_vacuum.md",
+    "long_running_transaction": "long_running_transactions.md",
+    "failed_backup": "failed_backup.md",
+}
 
 _PLANS_BY_ERROR_CLASS: dict[str, dict] = {
     "connection_exhaustion": {
@@ -83,7 +97,7 @@ _PLANS_BY_ERROR_CLASS: dict[str, dict] = {
 _DEFAULT_PLAN = {
     "action": "manual_triage",
     "commands": ["SELECT * FROM pg_stat_activity;"],
-    "risk": "unknown",
+    "risk": "high",
     "rationale": "No matching heuristic for this incident; escalate for manual review.",
 }
 
@@ -96,8 +110,9 @@ class LLMProvider(Protocol):
 
 class MockProvider:
     """Deterministic, network-free provider: reads the incident's own `error_class`
-    out of the prompt and returns the matching canned plan, so the demo is
-    reproducible without an API key and never returns another scenario's plan."""
+    and requires the matching retrieved runbook source before returning its
+    canned plan. This keeps the demo reproducible while making the RAG result
+    part of the decision instead of matching loose keywords from any chunk."""
 
     def __init__(self, model: str = "mock") -> None:
         self.model = model
@@ -105,7 +120,17 @@ class MockProvider:
     async def complete(self, prompt: str, *, system: str | None = None) -> str:
         match = _ERROR_CLASS_PATTERN.search(prompt)
         error_class = match.group(1) if match else None
-        plan = _PLANS_BY_ERROR_CLASS.get(error_class, _DEFAULT_PLAN)
+        expected_source = _RUNBOOK_SOURCE_BY_ERROR_CLASS.get(error_class)
+        retrieved_match = _RETRIEVED_RUNBOOKS_PATTERN.search(prompt)
+        retrieved_chunks = retrieved_match.group("chunks") if retrieved_match else ""
+        has_matching_runbook = (
+            expected_source is not None and f"Source: {expected_source}" in retrieved_chunks
+        )
+        plan = (
+            _PLANS_BY_ERROR_CLASS.get(error_class, _DEFAULT_PLAN)
+            if has_matching_runbook
+            else _DEFAULT_PLAN
+        )
         return json.dumps(plan)
 
     async def aclose(self) -> None:

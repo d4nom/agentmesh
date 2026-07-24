@@ -6,7 +6,9 @@ from __future__ import annotations
 
 from pydantic import ValidationError
 
+from agents.configuration import NoAgentParams, single_publish_subject
 from platform_core.agent import BaseAgent
+from platform_core.config import AgentConfig
 from platform_core.envelope import Envelope
 from platform_core.observability import get_logger
 
@@ -19,6 +21,11 @@ def build_query(request: MaintenanceRequest) -> str:
 
 
 class RequestParserAgent(BaseAgent):
+    def __init__(self, config: AgentConfig) -> None:
+        super().__init__(config)
+        NoAgentParams.model_validate(config.params)
+        self._output_subject = single_publish_subject(config, expected_type="task")
+
     async def handle(self, env: Envelope) -> None:
         log = get_logger(agent=self.config.name, correlation_id=env.correlation_id)
 
@@ -43,7 +50,7 @@ class RequestParserAgent(BaseAgent):
         )
 
         await self.publish(
-            subject=self.config.publishes[0],
+            subject=self._output_subject,
             type_="task",
             payload={"request": request.model_dump(), "query": build_query(request)},
             correlation_id=env.correlation_id,

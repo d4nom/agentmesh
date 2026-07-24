@@ -26,5 +26,5 @@ agents:
   - name: summarizer
     module: agents.summarizer:SummarizerAgent
     subscribes: tasks.summarize
-    publishes: [events.task.completed]
+    publishes: [events.incident.completed]
     stores: [redis]

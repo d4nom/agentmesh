@@ -19,5 +19,5 @@ agents:
   - name: maintenance-planner
     module: agents.maintenance.maintenance_planner:MaintenancePlannerAgent
     subscribes: tasks.plan_maintenance
-    publishes: [events.task.completed]
+    publishes: [events.maintenance.completed]
     stores: [redis]

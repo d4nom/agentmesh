@@ -25,9 +25,9 @@ explicit sign-off recorded on the request.
 - `medium` / `low` — SLA is advisory; log the overrun and proceed.
 
 ## Verdict semantics
-- `fits` — total estimated time is at or under `sla_minutes`.
-- `at_risk` — estimate is close to the ceiling (within 20%) but does not
-  exceed it; flag for monitoring during execution.
+- `fits` — total estimated time is below 80% of `sla_minutes`.
+- `at_risk` — estimate is at least 80% of the ceiling but does not exceed
+  it; flag for monitoring during execution.
 - `exceeds` — estimate is over `sla_minutes`. This must always be computed
   from the actual estimated minutes, never taken from a model's own
   self-reported verdict.

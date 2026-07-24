@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import os
 
-EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
 
 
 def fastembed_cache_dir() -> str | None:

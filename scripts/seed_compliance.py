@@ -21,6 +21,7 @@ from platform_core.embeddings import EMBEDDING_MODEL, fastembed_cache_dir
 COMPLIANCE_DIR = Path(__file__).resolve().parent.parent / "data" / "compliance"
 COLLECTION = os.environ.get("COMPLIANCE_COLLECTION", "compliance_scenarios")
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+QDRANT_TIMEOUT_SECONDS = 30
 
 _SECTION_SPLIT = re.compile(r"\n(?=## )")
 _H1_PATTERN = re.compile(r"^#\s+(.+)$", re.MULTILINE)
@@ -45,7 +46,7 @@ def chunk_markdown(text: str) -> list[tuple[str, str]]:
 
 def main() -> None:
     embedder = TextEmbedding(model_name=EMBEDDING_MODEL, cache_dir=fastembed_cache_dir())
-    client = QdrantClient(url=QDRANT_URL)
+    client = QdrantClient(url=QDRANT_URL, timeout=QDRANT_TIMEOUT_SECONDS)
 
     texts: list[str] = []
     payloads: list[dict] = []

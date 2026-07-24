@@ -5,13 +5,13 @@ first-run:
 	$(MAKE) demo
 
 build:
-	docker compose build
+	docker compose --profile build build agent-image
 
 up:
 	docker compose up -d
 
 down:
-	docker compose down -v
+	docker compose --profile build --profile with-summary --profile maintenance down -v --remove-orphans
 
 demo: up
 	@echo "Waiting for parser/rag/executor to report healthy..."
@@ -26,9 +26,22 @@ demo: up
 		docker compose ps parser rag executor >&2; \
 		exit 1; \
 	fi
-	docker compose exec parser python scripts/inject_incident.py --scenario connection_exhaustion
-	@echo "Waiting for the plan to land in executor logs..."
-	@sleep 5
+	@inject_output=$$(docker compose exec -T parser python scripts/inject_incident.py --scenario connection_exhaustion); \
+	echo "$$inject_output"; \
+	correlation_id=$$(echo "$$inject_output" \
+	  | grep -o '"correlation_id": *"[^"]*"' | head -1 \
+	  | sed -E 's/.*"correlation_id": *"([^"]*)".*/\1/'); \
+	if [ -z "$$correlation_id" ]; then \
+		echo "ERROR: could not extract correlation_id from inject_incident.py output" >&2; \
+		exit 1; \
+	fi; \
+	echo "Waiting up to 60s for events.incident.completed from executor (correlation_id=$$correlation_id)..."; \
+	if ! docker compose exec -T parser python scripts/wait_for_message.py \
+	  --subject events.incident.completed --correlation-id "$$correlation_id" \
+	  --sender executor --type event --wait-seconds 60; then \
+		docker compose logs --tail=100 executor >&2; \
+		exit 1; \
+	fi; \
 	docker compose logs --tail=50 executor
 	@echo ""
 	@echo "Jaeger UI (trace across parser -> rag -> executor): http://localhost:16686"
@@ -47,9 +60,22 @@ demo-alt:
 		docker compose ps parser rag executor summarizer >&2; \
 		exit 1; \
 	fi
-	docker compose exec parser python scripts/inject_incident.py --scenario connection_exhaustion
-	@echo "Waiting for the summary to land in summarizer logs..."
-	@sleep 5
+	@inject_output=$$(docker compose exec -T parser python scripts/inject_incident.py --scenario connection_exhaustion); \
+	echo "$$inject_output"; \
+	correlation_id=$$(echo "$$inject_output" \
+	  | grep -o '"correlation_id": *"[^"]*"' | head -1 \
+	  | sed -E 's/.*"correlation_id": *"([^"]*)".*/\1/'); \
+	if [ -z "$$correlation_id" ]; then \
+		echo "ERROR: could not extract correlation_id from inject_incident.py output" >&2; \
+		exit 1; \
+	fi; \
+	echo "Waiting up to 60s for events.incident.completed from summarizer (correlation_id=$$correlation_id)..."; \
+	if ! docker compose exec -T parser python scripts/wait_for_message.py \
+	  --subject events.incident.completed --correlation-id "$$correlation_id" \
+	  --sender summarizer --type event --wait-seconds 60; then \
+		docker compose logs --tail=100 summarizer >&2; \
+		exit 1; \
+	fi; \
 	docker compose logs --tail=50 summarizer
 	@echo ""
 	@echo "Jaeger UI: http://localhost:16686"
@@ -72,9 +98,22 @@ demo-request:
 		docker compose ps request-parser compliance-rag maintenance-planner >&2; \
 		exit 1; \
 	fi
-	docker compose exec request-parser python scripts/inject_request.py --scenario os_update
-	@echo "Waiting for the plan to land in maintenance-planner logs..."
-	@sleep 5
+	@inject_output=$$(docker compose exec -T request-parser python scripts/inject_request.py --scenario os_update); \
+	echo "$$inject_output"; \
+	correlation_id=$$(echo "$$inject_output" \
+	  | grep -o '"correlation_id": *"[^"]*"' | head -1 \
+	  | sed -E 's/.*"correlation_id": *"([^"]*)".*/\1/'); \
+	if [ -z "$$correlation_id" ]; then \
+		echo "ERROR: could not extract correlation_id from inject_request.py output" >&2; \
+		exit 1; \
+	fi; \
+	echo "Waiting up to 60s for events.maintenance.completed from maintenance-planner (correlation_id=$$correlation_id)..."; \
+	if ! docker compose exec -T request-parser python scripts/wait_for_message.py \
+	  --subject events.maintenance.completed --correlation-id "$$correlation_id" \
+	  --sender maintenance-planner --type event --wait-seconds 60; then \
+		docker compose logs --tail=100 maintenance-planner >&2; \
+		exit 1; \
+	fi; \
 	docker compose logs --tail=50 maintenance-planner
 	@echo ""
 	@echo "Jaeger UI (trace across request-parser -> compliance-rag -> maintenance-planner): http://localhost:16686"
@@ -98,6 +137,10 @@ demo-request-invalid:
 	correlation_id=$$(echo "$$inject_output" \
 	  | grep -o '"correlation_id": *"[^"]*"' | head -1 \
 	  | sed -E 's/.*"correlation_id": *"([^"]*)".*/\1/'); \
+	if [ -z "$$correlation_id" ]; then \
+		echo "ERROR: could not extract correlation_id from inject_request.py output" >&2; \
+		exit 1; \
+	fi; \
 	echo "Waiting up to 60s for max_deliver to exhaust and correlation_id=$$correlation_id to land in dlq.parse_request..."; \
 	docker compose exec -T request-parser python scripts/show_dlq.py --subject dlq.parse_request --correlation-id "$$correlation_id" --wait-seconds 60
 

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import re
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
+from agents.configuration import NoAgentParams, single_publish_subject
 from platform_core.agent import BaseAgent
+from platform_core.config import AgentConfig
 from platform_core.envelope import Envelope
 from platform_core.observability import get_logger
 
@@ -63,18 +66,27 @@ def extract_excerpt(raw_log: str) -> str:
 
 
 class RawIncidentPayload(BaseModel):
-    raw_log: str
-    host: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    raw_log: str = Field(min_length=1, max_length=100_000)
+    host: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class ParsedIncident(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     error_class: str
-    severity: str
-    host: str
-    raw_excerpt: str
+    severity: Literal["critical", "warning"]
+    host: str = Field(min_length=1, max_length=255)
+    raw_excerpt: str = Field(max_length=EXCERPT_MAX_CHARS)
 
 
 class ParserAgent(BaseAgent):
+    def __init__(self, config: AgentConfig) -> None:
+        super().__init__(config)
+        NoAgentParams.model_validate(config.params)
+        self._output_subject = single_publish_subject(config, expected_type="task")
+
     async def handle(self, env: Envelope) -> None:
         raw = RawIncidentPayload.model_validate(env.payload)
         error_class, severity = classify(raw.raw_log)
@@ -89,7 +101,7 @@ class ParserAgent(BaseAgent):
         log.info("incident_classified", error_class=error_class, severity=severity)
 
         await self.publish(
-            subject=self.config.publishes[0],
+            subject=self._output_subject,
             type_="task",
             payload=parsed.model_dump(),
             correlation_id=env.correlation_id,

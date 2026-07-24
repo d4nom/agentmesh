@@ -93,13 +93,74 @@ after publishing a downstream result but before recording completion and
 acking the input.
 
 **Decision.** Prefer a possible duplicate over silent loss. The SDK checks a
-Redis completion marker before `handle()`, writes it only after the handler
-and downstream publish succeed, and then acks. Retries and DLQ behavior remain
-available because a failed first attempt is never marked as complete.
+Redis completion marker scoped by durable consumer before `handle()`, writes it
+only after the handler and downstream publish succeed, and then acks. It extends
+the JetStream ack lease across the Redis check, handler, marker write and
+settlement. A lost final ack leaves the marker in place, so redelivery skips the
+handler and retries only settlement. Retries and DLQ behavior remain available
+because a failed first attempt is never marked as complete.
 
 **Consequences.** Redelivery of the same already-marked `message_id` is
-suppressed, but there is a crash window between the downstream side effect
-and the completion marker. The platform therefore promises at-least-once
-delivery with best-effort duplicate suppression, not exactly-once processing.
-A production agent with destructive effects must add a domain idempotency key
-or a transactional outbox supported by its target system.
+suppressed for that consumer, while another legitimate event subscriber keeps
+an independent marker. There is still a crash window between the downstream
+side effect and the completion marker. The platform therefore promises
+at-least-once delivery with best-effort duplicate suppression, not exactly-once
+processing. A production agent with destructive effects must add a domain
+idempotency key or a transactional outbox supported by its target system.
+
+## ADR-005: Work-queue tasks and fan-out events are different contracts
+
+**Context.** A generic subject bus can accidentally imply that every subject
+supports both competing work and broadcast delivery. JetStream retention
+semantics make that ambiguity dangerous.
+
+**Decision.** `tasks.>` uses `WORK_QUEUE` retention: one task subject denotes
+one competing-consumer role. Branching work is published to distinct task
+subjects. `events.>` uses limits retention and may have multiple independent
+durable consumers. Durable names and Redis markers include agent and subscribed
+subject identity; the display-level system name is deliberately excluded so a
+compatible YAML topology change reconnects to the same work-queue consumer.
+
+**Consequences.** Two task roles cannot overlap on the same `tasks.foo` filter;
+that constraint is deliberate and documented. Event observers do not suppress
+each other through a global idempotency key. Reusing an existing durable with a
+different filter is rejected at startup instead of silently binding new code to
+old consumer state. Because display-level `system` is not part of this identity,
+independent deployments sharing a NATS account and Redis database need external
+namespace/isolation.
+
+## ADR-006: Liveness depends on the bus, observability does not
+
+**Context.** A heartbeat-only task can leave a green process whose consumer has
+already died. Conversely, making Jaeger a hard startup dependency can take down
+healthy business processing solely because the trace UI is unavailable.
+
+**Decision.** Supervise both consumer and bus-heartbeat tasks. Update the
+health marker only after a successful NATS heartbeat; tolerate brief failures,
+then exit after a bounded consecutive-failure threshold so the container
+restart policy can recover the service. Do not gate agent startup on Jaeger.
+Bound stored events to seven days/256 MiB and dead letters to 30 days/512 MiB.
+
+**Consequences.** A NATS outage eventually makes an agent unhealthy and restarts
+it, while a Jaeger outage only loses/export-delays telemetry. Compose still
+proves single-node PoC recovery, not clustered infrastructure HA.
+
+## ADR-007: DLQ handoff owns the retry ceiling
+
+**Context.** If the broker's consumer `max_deliver` equals the application's
+five-attempt poison-message threshold, a failure to publish the DLQ record on
+the fifth delivery can strand the original message: it is neither terminated
+nor eligible for another server delivery.
+
+**Decision.** Configure agent consumers with server-side
+`max_deliver=-1` (unlimited) and keep five as the SDK's application threshold.
+From the fifth delivery onward, the SDK repeatedly attempts
+publish-to-DLQ-then-`term()`. It terminates the source only after JetStream has
+acknowledged the DLQ publication. Existing durable consumers have this runtime
+policy and `ack_wait` reconciled at startup.
+
+**Consequences.** A permanently unavailable DLQ does not silently lose the
+source message; it remains pending and the supervised agent may restart until
+infrastructure recovers. An unavailable DLQ can therefore cause repeated
+delivery attempts beyond five, which is intentional: preservation is preferred
+to an unrecorded drop.

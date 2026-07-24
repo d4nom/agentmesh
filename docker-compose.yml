@@ -7,12 +7,12 @@ x-agent-env: &agent-env
   QDRANT_URL: http://qdrant:6333
   OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
   LLM_PROVIDER: ${LLM_PROVIDER:-mock}
-  DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
 
 x-agent-common: &agent-common
-  build: .
   image: agentmesh/agent:latest
+  pull_policy: never
   restart: unless-stopped
+  stop_grace_period: 16m
   init: true
   healthcheck:
     test: ["CMD-SHELL", "test -f /tmp/healthy && find /tmp/healthy -newermt '-30 seconds' | grep -q ."]
@@ -25,18 +25,21 @@ x-agent-common: &agent-common
       condition: service_healthy
     redis:
       condition: service_healthy
-    qdrant:
-      condition: service_healthy
-    jaeger:
-      condition: service_healthy
 
 services:
+  agent-image:
+    build: .
+    image: agentmesh/agent:latest
+    profiles: ["build"]
+    entrypoint: ["/bin/true"]
+
   nats:
-    image: nats:2-alpine
+    image: nats:2.14.3-alpine
     command: ["-js", "-m", "8222"]
+    restart: unless-stopped
     ports:
-      - "4222:4222"
-      - "8222:8222"
+      - "127.0.0.1:4222:4222"
+      - "127.0.0.1:8222:8222"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz || exit 1"]
       interval: 5s
@@ -45,9 +48,10 @@ services:
       start_period: 5s
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.9-alpine
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -56,9 +60,10 @@ services:
       start_period: 5s
 
   qdrant:
-    image: qdrant/qdrant:v1.11.5
+    image: qdrant/qdrant:v1.18.2
+    restart: unless-stopped
     ports:
-      - "6333:6333"
+      - "127.0.0.1:6333:6333"
     healthcheck:
       test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
       interval: 5s
@@ -67,13 +72,12 @@ services:
       start_period: 5s
 
   jaeger:
-    image: jaegertracing/all-in-one:1.60
-    environment:
-      COLLECTOR_OTLP_ENABLED: "true"
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.20.0
+    restart: unless-stopped
     ports:
-      - "16686:16686"
-      - "4317:4317"
-      - "4318:4318"
+      - "127.0.0.1:16686:16686"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:16686/ || exit 1"]
       interval: 5s
@@ -82,8 +86,8 @@ services:
       start_period: 5s
 
   seed:
-    build: .
     image: agentmesh/agent:latest
+    pull_policy: never
     entrypoint: ["python", "scripts/seed_runbooks.py"]
     environment:
       QDRANT_URL: http://qdrant:6333
@@ -102,10 +106,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      qdrant:
-        condition: service_healthy
-      jaeger:
-        condition: service_healthy
 
   rag:
     <<: *agent-common
@@ -119,8 +119,6 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_healthy
-      jaeger:
-        condition: service_healthy
       seed:
         condition: service_completed_successfully
 
@@ -129,14 +127,11 @@ services:
     environment:
       <<: *agent-env
       AGENT_NAME: executor
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     depends_on:
       nats:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      qdrant:
-        condition: service_healthy
-      jaeger:
         condition: service_healthy
 
   summarizer:
@@ -150,10 +145,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      qdrant:
-        condition: service_healthy
-      jaeger:
-        condition: service_healthy
 
   # Second domain: maintenance-request pipeline. Own agent names, own subjects,
   # own Qdrant collection — a parallel pipeline, not a variant of the first
@@ -163,8 +154,8 @@ services:
   # services, and they must keep loading their own config regardless of what
   # this profile needs.
   seed-compliance:
-    build: .
     image: agentmesh/agent:latest
+    pull_policy: never
     profiles: ["maintenance"]
     entrypoint: ["python", "scripts/seed_compliance.py"]
     environment:
@@ -172,6 +163,8 @@ services:
     depends_on:
       qdrant:
         condition: service_healthy
+      seed:
+        condition: service_completed_successfully
     restart: "no"
 
   request-parser:
@@ -185,10 +178,6 @@ services:
       nats:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      qdrant:
-        condition: service_healthy
-      jaeger:
         condition: service_healthy
 
   compliance-rag:
@@ -205,8 +194,6 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_healthy
-      jaeger:
-        condition: service_healthy
       seed-compliance:
         condition: service_completed_successfully
 
@@ -217,12 +204,9 @@ services:
       <<: *agent-env
       SYSTEM_CONFIG: /app/configs/maintenance_request.yaml
       AGENT_NAME: maintenance-planner
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     depends_on:
       nats:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      qdrant:
-        condition: service_healthy
-      jaeger:
         condition: service_healthy

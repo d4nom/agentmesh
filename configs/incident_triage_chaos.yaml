@@ -19,7 +19,7 @@ agents:
   - name: executor
     module: agents.executor:ExecutorAgent
     subscribes: tasks.execute
-    publishes: [events.task.completed]
+    publishes: [events.incident.completed]
     stores: [redis]
     params:
       dry_run: true

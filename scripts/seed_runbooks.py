@@ -15,6 +15,7 @@ from platform_core.embeddings import EMBEDDING_MODEL, fastembed_cache_dir
 RUNBOOKS_DIR = Path(__file__).resolve().parent.parent / "data" / "runbooks"
 COLLECTION = os.environ.get("RUNBOOKS_COLLECTION", "runbooks")
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+QDRANT_TIMEOUT_SECONDS = 30
 
 _SECTION_SPLIT = re.compile(r"\n(?=## )")
 
@@ -25,7 +26,7 @@ def chunk_markdown(text: str) -> list[str]:
 
 def main() -> None:
     embedder = TextEmbedding(model_name=EMBEDDING_MODEL, cache_dir=fastembed_cache_dir())
-    client = QdrantClient(url=QDRANT_URL)
+    client = QdrantClient(url=QDRANT_URL, timeout=QDRANT_TIMEOUT_SECONDS)
 
     texts: list[str] = []
     payloads: list[dict] = []

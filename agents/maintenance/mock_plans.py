@@ -66,8 +66,9 @@ _PLANS_BY_PURPOSE: dict[str, dict] = {
         ],
         "total_estimated_minutes": 45,
         # Deliberately wrong on purpose: this is the mock's own (over-optimistic)
-        # self-assessment. The planner must override it via apply_sla_override()
-        # rather than trust it — that's the whole point of the tight-SLA demo.
+        # self-assessment. The planner must replace it via
+        # validate_and_finalize_plan() rather than trust it — that's the whole
+        # point of the tight-SLA demo.
         "sla_verdict": "fits",
         "downtime_note": "No downtime, but cross-node certificate propagation "
         "adds coordination overhead.",

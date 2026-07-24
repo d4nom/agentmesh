@@ -6,14 +6,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
+from agents.configuration import NoAgentParams, single_publish_subject
 from platform_core.agent import BaseAgent
+from platform_core.config import AgentConfig
 from platform_core.envelope import Envelope
 from platform_core.observability import get_logger
 
 
 class ExecutorOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     incident: dict[str, Any]
     plan: dict[str, Any]
     dry_run: bool
@@ -28,6 +32,11 @@ def build_summary(incident: dict[str, Any], plan: dict[str, Any]) -> str:
 
 
 class SummarizerAgent(BaseAgent):
+    def __init__(self, config: AgentConfig) -> None:
+        super().__init__(config)
+        NoAgentParams.model_validate(config.params)
+        self._output_subject = single_publish_subject(config, expected_type="event")
+
     async def handle(self, env: Envelope) -> None:
         data = ExecutorOutput.model_validate(env.payload)
         summary = build_summary(data.incident, data.plan)
@@ -36,7 +45,7 @@ class SummarizerAgent(BaseAgent):
         log.info("incident_summary", summary=summary)
 
         await self.publish(
-            subject=self.config.publishes[0],
+            subject=self._output_subject,
             type_="event",
             payload={**data.model_dump(), "summary": summary},
             correlation_id=env.correlation_id,

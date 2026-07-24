@@ -1,6 +1,7 @@
 import textwrap
 
 import pytest
+from pydantic import ValidationError
 
 from platform_core.config import build_agent_config, load_system_config
 
@@ -77,3 +78,67 @@ def test_build_agent_config_resolves_infra_urls(tmp_path, monkeypatch):
     assert agent_config.nats_url == "nats://nats:4222"
     assert agent_config.redis_url == "redis://redis:6379/0"
     assert agent_config.qdrant_url == "http://qdrant:6333"
+
+
+def test_unknown_llm_provider_is_rejected(tmp_path):
+    text = SAMPLE_YAML.replace(
+        "provider: ${LLM_PROVIDER:-mock}",
+        "provider: mook",
+    )
+
+    with pytest.raises(ValidationError, match="provider"):
+        load_system_config(_write_config(tmp_path, text))
+
+
+def test_unknown_config_field_is_rejected(tmp_path):
+    text = SAMPLE_YAML.replace(
+        "  - name: parser",
+        "  - name: parser\n    typo_field: true",
+    )
+
+    with pytest.raises(ValidationError, match="typo_field"):
+        load_system_config(_write_config(tmp_path, text))
+
+
+def test_duplicate_agent_names_are_rejected(tmp_path):
+    text = SAMPLE_YAML.replace("  - name: rag", "  - name: parser")
+
+    with pytest.raises(ValidationError, match="agent names must be unique"):
+        load_system_config(_write_config(tmp_path, text))
+
+
+@pytest.mark.parametrize(
+    "subject",
+    ["tasks.>", "events.task.*", "custom.subject"],
+)
+def test_subscription_must_be_an_exact_platform_subject(tmp_path, subject):
+    text = SAMPLE_YAML.replace("subscribes: tasks.parse", f"subscribes: {subject}")
+
+    with pytest.raises(ValidationError, match="exact"):
+        load_system_config(_write_config(tmp_path, text))
+
+
+def test_publish_subject_must_be_exact(tmp_path):
+    text = SAMPLE_YAML.replace("publishes: [tasks.retrieve]", "publishes: [tasks.*]")
+
+    with pytest.raises(ValidationError, match="wildcards"):
+        load_system_config(_write_config(tmp_path, text))
+
+
+def test_unknown_shared_store_is_rejected(tmp_path):
+    text = SAMPLE_YAML.replace("stores: [redis]", "stores: [redis, qdrnat]", 1)
+
+    with pytest.raises(ValidationError, match="qdrnat"):
+        load_system_config(_write_config(tmp_path, text))
+
+
+def test_duplicate_shared_store_is_rejected(tmp_path):
+    text = SAMPLE_YAML.replace("stores: [redis]", "stores: [redis, redis]", 1)
+
+    with pytest.raises(ValidationError, match="duplicates"):
+        load_system_config(_write_config(tmp_path, text))
+
+
+def test_empty_agent_list_is_rejected(tmp_path):
+    with pytest.raises(ValidationError, match="agents"):
+        load_system_config(_write_config(tmp_path, "system: empty\nagents: []\n"))
